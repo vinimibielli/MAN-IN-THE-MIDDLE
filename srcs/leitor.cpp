@@ -22,9 +22,7 @@
 #include <netinet/tcp.h>
 #include <netinet/udp.h>
 
-#define PORT 9000
 #define BUFFER_SIZE 8192
-#define MESSAGE_SERVER "Hello from client."
 
 std::vector<std::pair<std::string, int>> hostList;
 
@@ -33,82 +31,6 @@ void errorFunction(const std::string &message)
     std::cerr << message << std::endl;
     exit(EXIT_FAILURE);
 }
-
-void receiveMessage(int sockfd)
-{
-    char buffer[BUFFER_SIZE];
-    struct sockaddr_ll receiveAddr;
-    socklen_t addrLen = sizeof(receiveAddr);
-
-    while (true)
-    {
-        int recvLen = recvfrom(sockfd, buffer, BUFFER_SIZE, 0, (struct sockaddr *)&receiveAddr, &addrLen);
-        if (recvLen < 0)
-        {
-            if (errno == EAGAIN || errno == EWOULDBLOCK)
-            {
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            }
-            else
-            {
-                std::cerr << "Error to receive the message" << std::endl;
-            }
-        }
-        else
-        {
-            //acessing the ethernet header
-            struct ethhdr *eth = (struct ethhdr *)buffer;
-            if (ntohs(eth->h_proto) == ETH_P_IP)
-            {
-                struct iphdr *ip = (struct iphdr *)(buffer + sizeof(struct ethhdr));
-                std::string protocol;
-
-                // Check the protocol
-                switch (ip->protocol)
-                {
-                    case IPPROTO_TCP:
-                        protocol = "TCP";
-                        break;
-                    case IPPROTO_UDP:
-                        protocol = "UDP";
-                        break;
-                    default:
-                        protocol = "Unknown";
-                        break;
-                }
-
-                std::cout << "Received packet from " << inet_ntoa(*(struct in_addr *)&ip->saddr) << " with protocol: " << protocol << std::endl;
-
-                if (protocol == "TCP")
-                {
-                    struct tcphdr *tcp = (struct tcphdr *)(buffer + sizeof(struct ethhdr) + ip->ihl * 4);
-                    int sourcePort = ntohs(tcp->source);
-                    int destPort = ntohs(tcp->dest);
-                    if (sourcePort == 80 || destPort == 80)
-                    {
-                        std::cout << "HTTP packet detected" << std::endl;
-                        
-                        
-                    }
-                    else if (sourcePort == 443 || destPort == 443)
-                    {
-                        std::cout << "HTTPS packet detected" << std::endl;
-                    }
-                }
-                else if (protocol == "UDP")
-                {
-                    struct udphdr *udp = (struct udphdr *)(buffer + sizeof(struct ethhdr) + ip->ihl * 4);
-                    if (ntohs(udp->source) == 53 || ntohs(udp->dest) == 53)
-                    {
-                        std::cout << "DNS packet detected" << std::endl;
-                    }
-                }
-            }
-        }
-    }
-}
-
-
 
 // Checksum function
 unsigned short checksum(void *b, int len)
@@ -133,74 +55,6 @@ unsigned short checksum(void *b, int len)
     return result;
 }
 
-void sendICMPRequest(int sockfd, std::string ip, int numHosts)
-{
-    struct sockaddr_in hostsAddr;
-    socklen_t addrLen = sizeof(hostsAddr);
-    hostsAddr.sin_family = AF_INET;
-    hostsAddr.sin_port = 0;
-    hostsAddr.sin_addr.s_addr = inet_addr(ip.c_str());
-
-    char buffer[64];
-    memset(buffer, 0, sizeof(buffer));
-
-    struct icmphdr *icmp = (struct icmphdr *)buffer;
-    icmp->type = ICMP_ECHO;
-    icmp->code = 0;
-    icmp->un.echo.id = htons(1);
-    icmp->un.echo.sequence = htons(1);
-    icmp->checksum = 0;
-    icmp->checksum = checksum((unsigned short *)icmp, sizeof(buffer));
-
-    for (int i = 0; i < numHosts; i++)
-    {
-        int sendLen = sendto(sockfd, buffer, sizeof(buffer), 0, (struct sockaddr *)&hostsAddr, addrLen);
-        if (sendLen < 0)
-        {
-            std::cerr << "Error sending ICMP message" << std::endl;
-        }
-    }
-}
-
-void receiveICMPReply(int sockfd)
-{
-    char buffer[BUFFER_SIZE];
-    struct sockaddr_in hostsAddr;
-    socklen_t addrLen = sizeof(hostsAddr);
-
-    std::ofstream arquivo("hosts.txt");
-    if (!arquivo) {
-        std::cerr << "Error opening file for writing: " << "hosts.txt" << std::endl;
-        return;
-    }
-
-    while (true)
-    {
-        int recvLen = recvfrom(sockfd, buffer, BUFFER_SIZE, 0, (struct sockaddr *)&hostsAddr, &addrLen);
-        if (recvLen < 0)
-        {
-            if (errno == EAGAIN || errno == EWOULDBLOCK)
-            {
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            }
-            else
-            {
-                std::cerr << "Error to receive the ICMP reply" << std::endl;
-            }
-        }
-        else
-        {
-            struct icmphdr *icmp = (struct icmphdr *)buffer;
-            if (icmp->type == ICMP_ECHOREPLY)
-            {
-                std::cout << "ICMP Reply received" << std::endl;
-                hostList.push_back(std::make_pair(inet_ntoa(hostsAddr.sin_addr), icmp->un.echo.sequence));
-                arquivo << inet_ntoa(hostsAddr.sin_addr) << std::endl;
-            }
-        }
-    }
-}
-
 int main(int argc, char *argv[])
 {
 
@@ -211,52 +65,128 @@ int main(int argc, char *argv[])
     }
 
     int sockfd;
+    int sockrv;
     struct sockaddr_in localAddr;
     memset(&localAddr, 0, sizeof(localAddr)); // Inicializa a estrutura com zeros
     localAddr.sin_family = AF_INET;
     localAddr.sin_addr.s_addr = htonl(INADDR_ANY);
 
-    char buffer[BUFFER_SIZE];
-    std::string messageUser;
-
     std::string ipHost = argv[1];
     int timeout = atoi(argv[2]);
     std::string delimiter = "/";
 
-    std::string ip = ipHost.substr(0, ipHost.find(delimiter));
+    std::string baseIp = ipHost.substr(0, ipHost.find(delimiter));
+    baseIp = baseIp.substr(0, baseIp.find_last_of(".") + 1) + "0";
+    std::cout << "Base IP: " << baseIp << std::endl;
     std::string mask = ipHost.substr(ipHost.find(delimiter) + 1, ipHost.size());
     int numHosts = (1 << (32 - atoi(mask.c_str()))) - 2;
+    std::cout << "Numero de hosts: " << numHosts << std::endl;
 
     // socket();
 
     sockfd = (socket(AF_INET, SOCK_RAW, IPPROTO_ICMP));
-    if (sockfd < 0){
+    if (sockfd < 0)
+    {
         errorFunction("Error to create the socket");
     }
 
-    int timeout_ms = timeout;
-    struct timeval timeoutReply;
-    timeoutReply.tv_sec = timeout_ms / 1000;
-    timeoutReply.tv_usec = (timeout_ms % 1000) * 1000;
-
-    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &timeoutReply, sizeof(timeoutReply));
-
-    // Bind the socket
-
-    if (bind(sockfd, (struct sockaddr *)&localAddr, sizeof(localAddr)) < 0)
+    sockrv = (socket(AF_INET, SOCK_RAW, IPPROTO_ICMP));
+    if (sockrv < 0)
     {
-        perror("Bind failed");
-        close(sockfd);
-        return 1;
+        errorFunction("Error to create the socket");
+    }
+
+    struct timeval timeoutReply;
+    timeoutReply.tv_sec = timeout / 1000;
+    timeoutReply.tv_usec = (timeout % 1000) * 1000;
+
+    if (setsockopt(sockrv, SOL_SOCKET, SO_RCVTIMEO, &timeoutReply, sizeof(timeoutReply)) < 0)
+    {
+        errorFunction("Erro em bind do socket");
+        exit(1);
     }
 
     // send ICMP
 
-    sendICMPRequest(sockfd, ip, numHosts);
+    struct sockaddr_in sendAddr;
+    memset(&sendAddr, 0, sizeof(sendAddr));
+    sendAddr.sin_family = AF_INET;
+    sendAddr.sin_addr.s_addr = inet_addr(baseIp.c_str());
+    char sendBuffer[BUFFER_SIZE];
+    memset(sendBuffer, 0, BUFFER_SIZE);
 
-    // receive ICMP
+    struct sockaddr_in receiveAddr;
+    socklen_t addrLen = sizeof(receiveAddr);
+    memset(&receiveAddr, 0, sizeof(receiveAddr));
+    receiveAddr.sin_family = AF_INET;
+    receiveAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    char receiveBuffer[BUFFER_SIZE];
+    memset(receiveBuffer, 0, BUFFER_SIZE);
 
-    receiveICMPReply(sockfd);
+    std::ofstream arquivo("hosts.txt");
+    if (!arquivo)
+    {
+        std::cerr << "Error opening file for writing: " << "hosts.txt" << std::endl;
+        return -1;
+    }
+
+    for (int i = 0; i < numHosts; i++)
+    {
+        sendAddr.sin_addr.s_addr = inet_addr(baseIp.c_str()) + htonl(i + 1);
+        int packetSize = sizeof(struct iphdr) + sizeof(struct icmphdr);
+
+        struct iphdr *ipHeader = (struct iphdr *)sendBuffer;
+        ipHeader->version = 4;
+        ipHeader->ihl = 5;
+        ipHeader->tos = 0;
+        ipHeader->tot_len = packetSize;
+        ipHeader->id = htons(0);
+        ipHeader->frag_off = 0;
+        ipHeader->ttl = 255;
+        ipHeader->protocol = IPPROTO_ICMP;
+        ipHeader->saddr = inet_addr("192.198.1.1");
+        ipHeader->daddr = sendAddr.sin_addr.s_addr;
+        ipHeader->check = 0;
+        ipHeader->check = checksum((unsigned short *)sendBuffer, sizeof(struct iphdr));
+
+        struct icmphdr *icmp = (struct icmphdr *)(sendBuffer + sizeof(struct iphdr));
+        icmp->type = ICMP_ECHO;
+        icmp->code = 0;
+        icmp->un.echo.id = htons(1);
+        icmp->un.echo.sequence = htons(i);
+        icmp->checksum = 0;
+        icmp->checksum = checksum((unsigned short *)icmp, sizeof(struct icmphdr));
+
+        std::cout << "Sending ICMP packet to: " << inet_ntoa(sendAddr.sin_addr) << std::endl;
+
+        int sendLen = sendto(sockfd, sendBuffer, packetSize, 0, (struct sockaddr *)&sendAddr, (socklen_t)sizeof(sendAddr));
+        if (sendLen < 0)
+        {
+            std::cerr << "Erro ao enviar mensagem ICMP" << std::endl;
+        }      
+
+        int recvLen = recvfrom(sockrv, receiveBuffer, sizeof(receiveBuffer), 0, (struct sockaddr *)&receiveAddr, &addrLen);
+        if (recvLen < 0)
+        {
+            std::cout << "Host: " << inet_ntoa(sendAddr.sin_addr) << " inativo." << std::endl;
+        }
+        else
+        {
+             struct icmphdr *icmp_aux = (struct icmphdr *)receiveBuffer;   
+            if (icmp_aux->type == ICMP_ECHOREPLY && ntohs(icmp_aux->un.echo.id) == 1 && ntohs(icmp_aux->un.echo.sequence) == i)
+            {
+                std::cout << "ICMP Reply received" << std::endl;
+                hostList.push_back(std::make_pair(inet_ntoa(receiveAddr.sin_addr), icmp_aux->un.echo.sequence));
+                arquivo << inet_ntoa(receiveAddr.sin_addr) << std::endl;
+                std::cout << "Host: " << inet_ntoa(receiveAddr.sin_addr) << " ativo." << std::endl;
+            }
+            else
+            {
+                std::cout << "Host: " << inet_ntoa(receiveAddr.sin_addr) << " inativo." << std::endl;
+            }
+        }
+        //std::cout << "Host anterior: " << inet_ntoa(receiveAddr.sin_addr) << std::endl;
+    }
 
     return 0;
 }
