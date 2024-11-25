@@ -21,6 +21,9 @@
 #include <net/ethernet.h>
 #include <netinet/tcp.h>
 #include <netinet/udp.h>
+#include <netinet/ether.h> //header ethernet
+#include <netinet/in_systm.h> //tipos de dados
+
 
 #define BUFFER_SIZE 8192
 
@@ -60,16 +63,13 @@ int main(int argc, char *argv[])
 
     if (argc != 3)
     {
-        printf("Usage: %s <rede/máscara> <timeout_ms>\n", argv[0]);
+        std::cout << "Use: sudo ./nome-do-arquivo <ip-da-rede/mascara> <timeout_ms>" << std::endl;
         return 1;
     }
 
     int sockfd;
     int sockrv;
-    struct sockaddr_in localAddr;
-    memset(&localAddr, 0, sizeof(localAddr)); // Inicializa a estrutura com zeros
-    localAddr.sin_family = AF_INET;
-    localAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    int hosts_ativos = 0;
 
     std::string ipHost = argv[1];
     int timeout = atoi(argv[2]);
@@ -84,7 +84,7 @@ int main(int argc, char *argv[])
 
     // socket();
 
-    sockfd = (socket(AF_INET, SOCK_RAW, IPPROTO_ICMP));
+    sockfd = (socket(AF_INET, SOCK_RAW, IPPROTO_RAW));
     if (sockfd < 0)
     {
         errorFunction("Error to create the socket");
@@ -99,6 +99,7 @@ int main(int argc, char *argv[])
     struct timeval timeoutReply;
     timeoutReply.tv_sec = timeout / 1000;
     timeoutReply.tv_usec = (timeout % 1000) * 1000;
+    std::cout << "Timeout em milisegundos: " << timeoutReply.tv_usec * 1000 << std::endl;
 
     if (setsockopt(sockrv, SOL_SOCKET, SO_RCVTIMEO, &timeoutReply, sizeof(timeoutReply)) < 0)
     {
@@ -119,7 +120,7 @@ int main(int argc, char *argv[])
     socklen_t addrLen = sizeof(receiveAddr);
     memset(&receiveAddr, 0, sizeof(receiveAddr));
     receiveAddr.sin_family = AF_INET;
-    receiveAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    receiveAddr.sin_addr.s_addr = INADDR_ANY;
     char receiveBuffer[BUFFER_SIZE];
     memset(receiveBuffer, 0, BUFFER_SIZE);
 
@@ -165,10 +166,11 @@ int main(int argc, char *argv[])
             std::cerr << "Erro ao enviar mensagem ICMP" << std::endl;
         }      
 
+        sleep(timeout / 1000);
         int recvLen = recvfrom(sockrv, receiveBuffer, sizeof(receiveBuffer), 0, (struct sockaddr *)&receiveAddr, &addrLen);
         if (recvLen < 0)
         {
-            std::cout << "Host: " << inet_ntoa(sendAddr.sin_addr) << " inativo." << std::endl;
+            std::cout << "Host: " << inet_ntoa(sendAddr.sin_addr) << " inativo por tempo" << std::endl;
         }
         else
         {
@@ -179,6 +181,7 @@ int main(int argc, char *argv[])
                 hostList.push_back(std::make_pair(inet_ntoa(receiveAddr.sin_addr), icmp_aux->un.echo.sequence));
                 arquivo << inet_ntoa(receiveAddr.sin_addr) << std::endl;
                 std::cout << "Host: " << inet_ntoa(receiveAddr.sin_addr) << " ativo." << std::endl;
+                hosts_ativos++;
             }
             else
             {
