@@ -181,9 +181,11 @@ void snifferFunction(int sockfd, std::string ipVitima)
 
                         // Obter a URL acessada
 
-                        std::string urlAcessada = extractHttpUrl(httpData, httpDataLen);
+                        std::string urlAcessada = "";
+                        urlAcessada = extractHttpUrl(httpData, httpDataLen);
 
                         // Pushback no vetor
+                        if(urlAcessada != "")
                         hostAcessed.push_back(std::make_pair(std::make_pair(ipOrigem, urlAcessada), data_hora));
                     }
 
@@ -208,9 +210,11 @@ void snifferFunction(int sockfd, std::string ipVitima)
                         int dnsDataLen = recvLen - (sizeof(struct ethhdr) + ip->ihl * 4 + sizeof(struct udphdr));
 
                         // Obter o domínio acessado
-                        std::string dnsDataStr = extractDnsQuery(dnsData, dnsDataLen);
+                        std::string dnsDataStr = "";
+                        dnsDataStr = extractDnsQuery(dnsData, dnsDataLen);
 
                         // Pushback no vetor
+                        if(dnsDataStr != "")
                         hostAcessed.push_back(std::make_pair(std::make_pair(ipOrigem, dnsDataStr), data_hora));
                     }
                 }
