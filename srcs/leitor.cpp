@@ -34,23 +34,6 @@ void errorFunction(const std::string &message)
     exit(EXIT_FAILURE);
 }
 
-std::string extractHttpUrl(const char *httpData, int httpDataLen)
-{
-    // Check if it's a GET request
-    if (strncmp(httpData, "GET ", 4) == 0)
-    {
-        const char *urlStart = httpData + 4;
-        const char *urlEnd = strstr(urlStart, " ");
-        if (urlEnd != nullptr)
-        {
-            std::string url(urlStart, urlEnd - urlStart);
-            std::cout << "HTTP URL accessed: " << url << std::endl;
-            return url;
-        }
-    }
-    return "";
-}
-
 void receiveMessage(int sockfd)
 {
     char buffer[BUFFER_SIZE];
@@ -83,9 +66,6 @@ void receiveMessage(int sockfd)
                 // Check the protocol
                 switch (ip->protocol)
                 {
-                    case IPPROTO_ICMP:
-                        protocol = "ICMP";
-                        break;
                     case IPPROTO_TCP:
                         protocol = "TCP";
                         break;
@@ -107,11 +87,7 @@ void receiveMessage(int sockfd)
                     if (sourcePort == 80 || destPort == 80)
                     {
                         std::cout << "HTTP packet detected" << std::endl;
-                        std::string url = extractHttpUrl(buffer + sizeof(struct ethhdr) + ip->ihl * 4 + tcp->doff * 4, recvLen - sizeof(struct ethhdr) - ip->ihl * 4 - tcp->doff * 4);
-                        if (!url.empty())
-                        {
-                            std::cout << "HTTP URL accessed: " << url << std::endl;
-                        }
+                        
                         
                     }
                     else if (sourcePort == 443 || destPort == 443)
@@ -192,8 +168,8 @@ void receiveICMPReply(int sockfd)
     struct sockaddr_in hostsAddr;
     socklen_t addrLen = sizeof(hostsAddr);
 
-    std::ofstream outFile("hosts.txt");
-    if (!outFile) {
+    std::ofstream arquivo("hosts.txt");
+    if (!arquivo) {
         std::cerr << "Error opening file for writing: " << "hosts.txt" << std::endl;
         return;
     }
@@ -219,7 +195,7 @@ void receiveICMPReply(int sockfd)
             {
                 std::cout << "ICMP Reply received" << std::endl;
                 hostList.push_back(std::make_pair(inet_ntoa(hostsAddr.sin_addr), icmp->un.echo.sequence));
-                outFile << "Host: " << inet_ntoa(hostsAddr.sin_addr) << ", RTT: " << icmp->un.echo.sequence << " ms" << std::endl;
+                arquivo << inet_ntoa(hostsAddr.sin_addr) << std::endl;
             }
         }
     }
@@ -235,8 +211,10 @@ int main(int argc, char *argv[])
     }
 
     int sockfd;
-    struct sockaddr_in hostsAddr;
-    socklen_t addrLen = sizeof(hostsAddr);
+    struct sockaddr_in localAddr;
+    memset(&localAddr, 0, sizeof(localAddr)); // Inicializa a estrutura com zeros
+    localAddr.sin_family = AF_INET;
+    localAddr.sin_addr.s_addr = htonl(INADDR_ANY);
 
     char buffer[BUFFER_SIZE];
     std::string messageUser;
@@ -251,9 +229,10 @@ int main(int argc, char *argv[])
 
     // socket();
 
-    sockfd = (socket(AF_INET, SOCK_RAW, IPPROTO_RAW));
-    if (sockfd < 0)
+    sockfd = (socket(AF_INET, SOCK_RAW, IPPROTO_ICMP));
+    if (sockfd < 0){
         errorFunction("Error to create the socket");
+    }
 
     int timeout_ms = timeout;
     struct timeval timeoutReply;
@@ -264,10 +243,6 @@ int main(int argc, char *argv[])
 
     // Bind the socket
 
-    struct sockaddr_in localAddr;
-    memset(&localAddr, 0, sizeof(localAddr));
-    localAddr.sin_family = AF_INET;
-    localAddr.sin_addr.s_addr = htonl(INADDR_ANY);
     if (bind(sockfd, (struct sockaddr *)&localAddr, sizeof(localAddr)) < 0)
     {
         perror("Bind failed");
